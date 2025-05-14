@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2D Grid Canvas Game with Winning Number</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #f0f0f0;
+        }
+        canvas {
+            border: 1px solid #000;
+            cursor: default;
+        }
+        .controls {
+            position: absolute;
+            margin: 20px;
+            top: 0;
+            right: 0;
+        }
+        .controls h1 {
+            margin-bottom: 10px;
+        }
+        .controls .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gridCanvas"></canvas>
+    <div class="controls">
+        <h1 id="winningNumberDisplay">Winning Number:</h1>
+        <div class="btn">
+            <button id="goToStartBtn">Go to Start</button>
+            <button id="resetBtn">Reset</button>
+        </div>
+    </div>
+    <script>
+      const canvas = document.getElementById("gridCanvas");
+      const ctx = canvas.getContext("2d");
+      const goToStartBtn = document.getElementById("goToStartBtn");
+      const resetBtn = document.getElementById("resetBtn");
+      const winningNumberDisplay = document.getElementById(
+          "winningNumberDisplay"
+      );
+
+      // ตั้งค่าขนาด canvas และ grid
+      const gridSize = 20; // ขนาดของแต่ละช่องเริ่มต้น (px)
+      const minBlockSize = 10; // ขนาด block เล็กสุดเมื่อซูมออก (px)
+      const maxBlockSize = 50; // ขนาด block ใหญ่สุดเมื่อซูมเข้า (px)
+      let scale = 1; // ระดับการซูม (gridSize * scale = ขนาด block)
+      let offsetX = 0; // การเลื่อนในแกน X
+      let offsetY = 0; // การเลื่อนในแกน Y
+      const initialOffsetX = 0; // ค่า offsetX เริ่มต้น
+      const initialOffsetY = 0; // ค่า offsetY เริ่มต้น
+      let gridData = {}; // Object เก็บสถานะสีและตัวเลขของช่อง {y: {x: {color: boolean, value: number, clicked: boolean, wasWinning: boolean}}}
+      let canvasWidth = window.innerWidth;
+      let canvasHeight = window.innerHeight;
+
+      // ตัวแปรสำหรับการลากเมาส์
+      let isDragging = false;
+      let startMouseX = 0;
+      let startMouseY = 0;
+      let hasMoved = false;
+
+      // กำหนดช่วงตัวเลขสุ่มและตัวเลขที่ชนะ
+      const minRandom = 1;
+      const maxRandom = 2;
+      let winningNumber =
+          Math.floor(Math.random() * (maxRandom - minRandom + 1)) + minRandom;
+      console.log(`Winning Number: ${winningNumber}`); // แสดงตัวเลขที่ชนะใน console
+      const winningColor = "lightgreen"; // สีของช่องที่ชนะ
+      const defaultColor = "#ffffff"; // สีเริ่มต้นของช่อง
+
+      // ฟังก์ชันอัปเดตการแสดงผล Winning Number
+      function updateWinningNumberDisplay() {
+          winningNumberDisplay.textContent = `Winning Number: ${winningNumber}`;
+      }
+      updateWinningNumberDisplay(); // แสดงครั้งแรกที่โหลด
+
+      // ปรับขนาด canvas
+      function resizeCanvas() {
+          canvasWidth = window.innerWidth;
+          canvasHeight = window.innerHeight;
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          drawGrid();
+      }
+
+      // สร้างตัวเลขสุ่มในช่วงที่กำหนด
+      function getRandomNumber(min, max) {
+          return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      // อัปเดต grid ถ้าจำเป็น (ใช้ Object แทน Array สองมิติ)
+      function ensureGridData(x, y) {
+          if (!gridData[y]) gridData[y] = {};
+          if (!gridData[y][x]) {
+              gridData[y][x] = {
+                  color: false,
+                  value: getRandomNumber(minRandom, maxRandom),
+                  clicked: false,
+                  wasWinning: false, // สถานะใหม่: เคยเป็นช่องที่ชนะหรือไม่
+              }; // false = ขาว, true = ดำ พร้อมค่าสุ่ม และสถานะคลิก
+          }
+      }
+
+      // วาด grid เฉพาะช่องที่มองเห็น
+      function drawGrid() {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          const scaledGridSize = gridSize * scale;
+          const startX = Math.floor(-offsetX / scaledGridSize);
+          const startY = Math.floor(-offsetY / scaledGridSize);
+          const endX = Math.ceil((canvasWidth - offsetX) / scaledGridSize);
+          const endY = Math.ceil((canvasHeight - offsetY) / scaledGridSize);
+
+          ctx.fillStyle = defaultColor;
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+          ctx.font = `${Math.max(10, scaledGridSize / 2)}px sans-serif`; // กำหนด font size ตามขนาด block
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          for (let y = startY; y <= endY; y++) {
+              const rowData = gridData[y];
+              if (rowData) {
+                  for (let x = startX; x <= endX; x++) {
+                      const cellData = rowData[x];
+                      if (cellData) {
+                          const drawX = x * scaledGridSize + offsetX;
+                          const drawY = y * scaledGridSize + offsetY;
+
+                          if (
+                              drawX + scaledGridSize > 0 &&
+                              drawX < canvasWidth &&
+                              drawY + scaledGridSize > 0 &&
+                              drawY < canvasHeight
+                          ) {
+                              if (cellData.color === true) {
+                                  // ถ้าเป็นสีดำ
+                                  ctx.fillStyle = "#000000";
+                              } else if (cellData.color === winningColor) {
+                                  // ถ้าเป็นช่องที่ชนะ
+                                  ctx.fillStyle = winningColor;
+                              } else {
+                                  // ถ้าเป็นสีขาว (หรือสีเริ่มต้น)
+                                  ctx.fillStyle = defaultColor;
+                              }
+                              ctx.fillRect(drawX, drawY, scaledGridSize, scaledGridSize);
+                              ctx.strokeStyle = "#cccccc";
+                              ctx.strokeRect(drawX, drawY, scaledGridSize, scaledGridSize);
+
+                              if (cellData.clicked) {
+                                  // แสดงตัวเลขถ้าเคยคลิกแล้ว
+                                  ctx.fillStyle = "#888888";
+                                  ctx.fillText(
+                                      cellData.value,
+                                      drawX + scaledGridSize / 2,
+                                      drawY + scaledGridSize / 2
+                                  );
+                              }
+                          }
+                      } else {
+                          // วาดเส้นขอบสำหรับช่องที่ไม่มีข้อมูล (เป็นสีขาวโดยปริยาย)
+                          const drawX = x * scaledGridSize + offsetX;
+                          const drawY = y * scaledGridSize + offsetY;
+                          if (
+                              drawX + scaledGridSize > 0 &&
+                              drawX < canvasWidth &&
+                              drawY + scaledGridSize > 0 &&
+                              drawY < canvasHeight
+                          ) {
+                              ctx.strokeStyle = "#cccccc";
+                              ctx.strokeRect(drawX, drawY, scaledGridSize, scaledGridSize);
+                          }
+                      }
+                  }
+              } else {
+                  // วาดเส้นขอบสำหรับแถวที่ไม่มีข้อมูล (เป็นสีขาวโดยปริยาย)
+                  for (let x = startX; x <= endX; x++) {
+                      const drawX = x * scaledGridSize + offsetX;
+                      const drawY = y * scaledGridSize + offsetY;
+                      if (
+                          drawX + scaledGridSize > 0 &&
+                          drawX < canvasWidth &&
+                          drawY + scaledGridSize > 0 &&
+                          drawY < canvasHeight
+                      ) {
+                          ctx.strokeStyle = "#cccccc";
+                          ctx.strokeRect(drawX, drawY, scaledGridSize, scaledGridSize);
+                      }
+                  }
+              }
+          }
+      }
+
+      // จัดการคลิกเพื่อเปลี่ยนสีและแสดง alert หากตรงกับตัวเลขที่ชนะ
+      canvas.addEventListener("click", (e) => {
+          if (hasMoved) return;
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = (e.clientX - rect.left - offsetX) / scale;
+          const mouseY = (e.clientY - rect.top - offsetY) / scale;
+          const gridX = Math.floor(mouseX / gridSize);
+          const gridY = Math.floor(mouseY / gridSize);
+
+          ensureGridData(gridX, gridY);
+          const cell = gridData[gridY][gridX];
+
+          if (!cell.clicked) {
+              // ถ้ายังไม่เคยคลิก
+              cell.clicked = true;
+              if (cell.value === winningNumber) {
+                  cell.color = winningColor; // เปลี่ยนเป็นสีเขียวเมื่อชนะ
+                  cell.wasWinning = true; // ตั้งค่าว่าเคยเป็นช่องที่ชนะ
+              } else {
+                  cell.color = true; // สลับเป็นสีดำเมื่อไม่ชนะ
+              }
+          } else {
+              // ถ้าเคยคลิกแล้ว
+              if (cell.wasWinning) {
+                  // ถ้าเคยเป็นช่องที่ชนะ ให้สลับระหว่างขาวและเขียว
+                  if (cell.color === winningColor) {
+                      cell.color = defaultColor;
+                  } else {
+                      cell.color = winningColor;
+                  }
+              } else {
+                  // ถ้าไม่เคยเป็นช่องที่ชนะ ให้สลับระหว่างดำและขาว
+                  cell.color = !cell.color;
+              }
+          }
+          drawGrid();
+      });
+
+      // จัดการซูมด้วย scroll wheel
+      canvas.addEventListener("wheel", (e) => {
+          e.preventDefault();
+          const zoomSpeed = 0.1;
+          const oldScale = scale;
+          if (e.deltaY < 0) {
+              scale = Math.min(maxBlockSize / gridSize, scale + zoomSpeed); // จำกัดซูมเข้า
+          } else {
+              scale = Math.max(minBlockSize / gridSize, scale - zoomSpeed); // จำกัดซูมออก
+          }
+
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+          offsetX = mouseX - (mouseX - offsetX) * (scale / oldScale);
+          offsetY = mouseY - (mouseY - offsetY) * (scale / oldScale);
+
+          const scaledGridSize = gridSize * scale;
+          const minOffsetX =
+              canvasWidth -
+              (Math.ceil(canvasWidth / scaledGridSize) + 1) * scaledGridSize;
+          const maxOffsetX = scaledGridSize;
+          const minOffsetY =
+              canvasHeight -
+              (Math.ceil(canvasHeight / scaledGridSize) + 1) * scaledGridSize;
+          const maxOffsetY = scaledGridSize;
+
+          offsetX = Math.max(minOffsetX, Math.min(maxOffsetX, offsetX));
+          offsetY = Math.max(minOffsetY, Math.min(maxOffsetY, offsetY));
+
+          drawGrid();
+      });
+
+      // จัดการลากเมาส์เพื่อเลื่อน
+      canvas.addEventListener("mousedown", (e) => {
+          isDragging = true;
+          startMouseX = e.clientX;
+          startMouseY = e.clientY;
+          hasMoved = false;
+          canvas.style.cursor = "grab";
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+          if (isDragging) {
+              const deltaX = e.clientX - startMouseX;
+              const deltaY = e.clientY - startMouseY;
+              if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+                  hasMoved = true;
+              }
+              offsetX += deltaX;
+              offsetY += deltaY;
+              startMouseX = e.clientX;
+              startMouseY = e.clientY;
+              drawGrid();
+          }
+      });
+
+      canvas.addEventListener("mouseup", () => {
+          isDragging = false;
+          canvas.style.cursor = "default";
+      });
+
+      canvas.addEventListener("mouseleave", () => {
+          isDragging = false;
+          canvas.style.cursor = "default";
+      });
+
+      // จัดการเลื่อนด้วยคีย์บอร์ด
+      document.addEventListener("keydown", (e) => {
+          const panSpeed = 10;
+          if (e.key === "ArrowLeft") offsetX += panSpeed;
+          if (e.key === "ArrowRight") offsetX -= panSpeed;
+          if (e.key === "ArrowUp") offsetY += panSpeed;
+          if (e.key === "ArrowDown") offsetY -= panSpeed;
+          drawGrid();
+      });
+
+      // Go to Start Button
+      goToStartBtn.addEventListener("click", () => {
+          offsetX = initialOffsetX;
+          offsetY = initialOffsetY;
+          scale = 1;
+          drawGrid();
+      });
+
+      // Reset Button
+      resetBtn.addEventListener("click", () => {
+          gridData = {}; // Clear the grid data
+          scale = 1;
+          offsetX = initialOffsetX;
+          offsetY = initialOffsetY;
+          winningNumber =
+              Math.floor(Math.random() * (maxRandom - minRandom + 1)) + minRandom;
+          console.log(`New Winning Number: ${winningNumber}`);
+          updateWinningNumberDisplay(); // อัปเดตการแสดงผล Winning Number
+          drawGrid();
+      });
+
+      // เริ่มต้น
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+  </script>
+</body>
+</html>
